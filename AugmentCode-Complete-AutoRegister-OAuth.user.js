@@ -21,6 +21,7 @@
 // @connect      *.api.augmentcode.com
 // @connect      api.augmentcode.com
 // @connect      augment.daiju.live
+// @connect      127.0.0.1
 // ==/UserScript==
 
 (function () {
@@ -390,7 +391,10 @@
       captchaWaitTime: GM_getValue('captchaWaitTime', 20), // 验证码模块等待时间（秒）
       suppressTestLogs: GM_getValue('suppressTestLogs', false), // 是否抑制测试日志
       maxRegistrationCount: GM_getValue('maxRegistrationCount', 10), // 最大注册数量，默认10个
-      registrationInterval: GM_getValue('registrationInterval', 60) // 注册间隔时间（秒），默认60秒
+      registrationInterval: GM_getValue('registrationInterval', 60), // 注册间隔时间（秒），默认60秒
+      mailMode: GM_getValue('mailMode', 'temp'), // 邮箱模式：'temp' 或 'outlook'
+      outlookApiUrl: GM_getValue('outlookApiUrl', 'http://127.0.0.1:8111'), // Outlook API地址
+      outlookEmail: GM_getValue('outlookEmail', '') // Outlook邮箱地址
     },
 
     // 状态变化监听器
@@ -422,6 +426,9 @@
         GM_setValue('suppressTestLogs', this.app.suppressTestLogs);
         GM_setValue('maxRegistrationCount', this.app.maxRegistrationCount);
         GM_setValue('registrationInterval', this.app.registrationInterval);
+        GM_setValue('mailMode', this.app.mailMode);
+        GM_setValue('outlookApiUrl', this.app.outlookApiUrl);
+        GM_setValue('outlookEmail', this.app.outlookEmail);
 
         // 触发状态变化监听器
         this.notifyListeners();
@@ -2536,9 +2543,39 @@
           <span id="advanced-config-toggle" class="augment-section-toggle">▼</span>
         </div>
         <div id="advanced-config-content" class="augment-section-content" style="display: none;">
+          <!-- 邮箱模式配置 -->
+          <div class="augment-config-group">
+            <label class="augment-label">邮箱模式:</label>
+            <div class="augment-input-group">
+              <select id="mail-mode-select" class="augment-input">
+                <option value="temp">临时邮箱</option>
+                <option value="outlook">本地Outlook邮箱</option>
+              </select>
+              <button id="save-mail-mode-btn" class="augment-btn-small">保存</button>
+            </div>
+            <div class="augment-help-text">选择验证码获取方式</div>
+          </div>
+
+          <!-- Outlook邮箱配置 -->
+          <div id="outlook-config-group" class="augment-config-group" style="display: none;">
+            <label class="augment-label">Outlook邮箱:</label>
+            <div class="augment-input-group">
+              <input id="outlook-email-input" type="email" placeholder="your-email@outlook.com" class="augment-input">
+              <button id="save-outlook-email-btn" class="augment-btn-small">保存</button>
+            </div>
+            <div class="augment-help-text">输入要监控的Outlook邮箱地址</div>
+            
+            <label class="augment-label">API地址:</label>
+            <div class="augment-input-group">
+              <input id="outlook-api-url-input" type="url" placeholder="http://127.0.0.1:8111" class="augment-input">
+              <button id="save-outlook-api-btn" class="augment-btn-small">保存</button>
+            </div>
+            <div class="augment-help-text">本地Outlook邮件管理系统API地址</div>
+          </div>
+
           <!-- 邮箱配置 -->
           <div class="augment-config-group">
-            <label class="augment-label">邮箱设置:</label>
+            <label class="augment-label">预设邮箱设置:</label>
             <div class="augment-button-group" style="margin-bottom: 8px;">
               <button id="preset-email-btn" class="augment-btn-small">配置邮箱</button>
               <button id="clear-preset-btn" class="augment-btn-small warning">清除</button>
@@ -2598,6 +2635,12 @@
       this.captchaWaitTimeInput = this.element.querySelector('#captcha-wait-time');
       this.maxRegistrationCountInput = this.element.querySelector('#max-registration-count');
       this.registrationIntervalInput = this.element.querySelector('#registration-interval');
+      
+      // 新增的邮箱模式相关元素
+      this.mailModeSelect = this.element.querySelector('#mail-mode-select');
+      this.outlookConfigGroup = this.element.querySelector('#outlook-config-group');
+      this.outlookEmailInput = this.element.querySelector('#outlook-email-input');
+      this.outlookApiUrlInput = this.element.querySelector('#outlook-api-url-input');
     },
 
     /**
@@ -2631,6 +2674,52 @@
         EventManager.bind(clearPresetBtn, 'click', () => {
           if (confirm('确定要清除所有预设邮箱吗？')) {
             clearPresetEmails();
+          }
+        }, { debug: false });
+      }
+
+      // 邮箱模式选择事件
+      const saveMailModeBtn = this.element.querySelector('#save-mail-mode-btn');
+      if (saveMailModeBtn) {
+        EventManager.bind(saveMailModeBtn, 'click', () => {
+          const mailMode = this.mailModeSelect.value;
+          StateManager.setAppState({ mailMode: mailMode });
+          getLogger().log(`✅ 邮箱模式已设置为: ${mailMode === 'temp' ? '临时邮箱' : '本地Outlook邮箱'}`, 'success');
+          this.update(); // 更新UI显示
+        }, { debug: false });
+      }
+
+      // 邮箱模式选择变化事件
+      if (this.mailModeSelect) {
+        EventManager.bind(this.mailModeSelect, 'change', () => {
+          this.updateOutlookConfigVisibility();
+        }, { debug: false });
+      }
+
+      // Outlook邮箱保存事件
+      const saveOutlookEmailBtn = this.element.querySelector('#save-outlook-email-btn');
+      if (saveOutlookEmailBtn) {
+        EventManager.bind(saveOutlookEmailBtn, 'click', () => {
+          const email = this.outlookEmailInput.value.trim();
+          if (email && email.includes('@')) {
+            StateManager.setAppState({ outlookEmail: email });
+            getLogger().log(`✅ Outlook邮箱已设置为: ${email}`, 'success');
+          } else {
+            getLogger().log('❌ 请输入有效的邮箱地址', 'error');
+          }
+        }, { debug: false });
+      }
+
+      // Outlook API URL保存事件
+      const saveOutlookApiBtn = this.element.querySelector('#save-outlook-api-btn');
+      if (saveOutlookApiBtn) {
+        EventManager.bind(saveOutlookApiBtn, 'click', () => {
+          const apiUrl = this.outlookApiUrlInput.value.trim();
+          if (apiUrl && (apiUrl.startsWith('http://') || apiUrl.startsWith('https://'))) {
+            StateManager.setAppState({ outlookApiUrl: apiUrl });
+            getLogger().log(`✅ Outlook API地址已设置为: ${apiUrl}`, 'success');
+          } else {
+            getLogger().log('❌ 请输入有效的API地址 (以http://或https://开头)', 'error');
           }
         }, { debug: false });
       }
@@ -2738,6 +2827,23 @@
         this.registrationIntervalInput.value = StateManager.app.registrationInterval || 60;
       }
 
+      // 更新邮箱模式选择
+      if (this.mailModeSelect) {
+        this.mailModeSelect.value = StateManager.app.mailMode || 'temp';
+      }
+
+      // 更新Outlook邮箱配置
+      if (this.outlookEmailInput) {
+        this.outlookEmailInput.value = StateManager.app.outlookEmail || '';
+      }
+
+      if (this.outlookApiUrlInput) {
+        this.outlookApiUrlInput.value = StateManager.app.outlookApiUrl || 'http://127.0.0.1:8111';
+      }
+
+      // 更新Outlook配置区域的可见性
+      this.updateOutlookConfigVisibility();
+
       // 更新展开状态
       this.isExpanded = StateManager.ui.sections.advanced;
       if (this.content) {
@@ -2745,6 +2851,16 @@
       }
       if (this.toggleBtn) {
         this.toggleBtn.style.transform = this.isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+      }
+    },
+
+    /**
+     * 更新Outlook配置区域的可见性
+     */
+    updateOutlookConfigVisibility() {
+      if (this.outlookConfigGroup && this.mailModeSelect) {
+        const isOutlookMode = this.mailModeSelect.value === 'outlook';
+        this.outlookConfigGroup.style.display = isOutlookMode ? 'block' : 'none';
       }
     }
   };
@@ -4045,32 +4161,155 @@
     });
   }
 
-  // 获取验证码（带重试机制）
-  async function getVerificationCode(maxRetries = 5, retryInterval = 3000) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      getLogger().log(`尝试获取验证码 (第 ${attempt + 1}/${maxRetries} 次)...`);
+  /**
+   * 从本地Outlook邮箱API获取验证码
+   * @param {string} keyword - 搜索关键词，默认为"验证码"
+   * @param {number} maxWaitTime - 最大等待时间（秒），默认60秒
+   * @returns {Promise<string|null>} 验证码或null
+   */
+  async function getOutlookMailCode(keyword = "验证码", maxWaitTime = 60) {
+    const apiUrl = StateManager.app.outlookApiUrl;
+    const email = StateManager.app.outlookEmail;
+    
+    if (!email) {
+      getLogger().log("❌ 未配置Outlook邮箱地址", 'error');
+      return null;
+    }
 
+    getLogger().log(`🔍 开始从Outlook邮箱获取验证码: ${email}`, 'info');
+    getLogger().log(`📡 API地址: ${apiUrl}`, 'info');
+
+    const startTime = Date.now();
+    const endTime = startTime + (maxWaitTime * 1000);
+
+    while (Date.now() < endTime) {
       try {
-        const code = await getLatestMailCode();
-        if (code) {
-          getLogger().log("成功获取验证码: " + code, 'success');
-          return code;
+        // 获取邮件列表
+        const emailListUrl = `${apiUrl}/emails/${encodeURIComponent(email)}?folder=inbox&page=1&page_size=10&refresh=true`;
+        
+        const emailListResponse = await new Promise((resolve, reject) => {
+          GM_xmlhttpRequest({
+            method: "GET",
+            url: emailListUrl,
+            timeout: 10000,
+            onload: function(response) {
+              resolve(response);
+            },
+            onerror: function(error) {
+              reject(error);
+            },
+            ontimeout: function() {
+              reject(new Error('请求超时'));
+            }
+          });
+        });
+
+        if (emailListResponse.status !== 200) {
+          getLogger().log(`❌ 获取邮件列表失败，状态码: ${emailListResponse.status}`, 'error');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          continue;
         }
 
-        if (attempt < maxRetries - 1) {
-          getLogger().log(`未获取到验证码，${retryInterval / 1000}秒后重试...`,
-              'warning');
-          await new Promise(resolve => setTimeout(resolve, retryInterval));
+        const emailListData = JSON.parse(emailListResponse.responseText);
+        
+        if (!emailListData.emails || !Array.isArray(emailListData.emails)) {
+          getLogger().log("📧 暂无邮件，继续等待...", 'info');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          continue;
         }
+
+        // 查找包含关键词的邮件
+        for (const emailInfo of emailListData.emails) {
+          const subject = emailInfo.subject || '';
+          const snippet = emailInfo.snippet || '';
+          
+          if (subject.includes(keyword) || snippet.includes(keyword)) {
+            getLogger().log(`📬 找到可能包含验证码的邮件: ${subject}`, 'info');
+            
+            // 获取邮件详情
+            const messageId = emailInfo.message_id;
+            const emailDetailUrl = `${apiUrl}/emails/${encodeURIComponent(email)}/${encodeURIComponent(messageId)}`;
+            
+            const emailDetailResponse = await new Promise((resolve, reject) => {
+              GM_xmlhttpRequest({
+                method: "GET",
+                url: emailDetailUrl,
+                timeout: 10000,
+                onload: function(response) {
+                  resolve(response);
+                },
+                onerror: function(error) {
+                  reject(error);
+                },
+                ontimeout: function() {
+                  reject(new Error('请求超时'));
+                }
+              });
+            });
+
+            if (emailDetailResponse.status !== 200) {
+              getLogger().log(`❌ 获取邮件详情失败，状态码: ${emailDetailResponse.status}`, 'error');
+              continue;
+            }
+
+            const emailDetailData = JSON.parse(emailDetailResponse.responseText);
+            const emailBody = emailDetailData.body || emailDetailData.text_content || '';
+            
+            // 提取验证码
+            const code = extractVerificationCode(emailBody);
+            if (code) {
+              getLogger().log(`✅ 成功从Outlook邮箱获取验证码: ${code}`, 'success');
+              return code;
+            }
+          }
+        }
+
+        // 等待3秒后继续轮询
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
       } catch (error) {
-        getLogger().log("获取验证码出错: " + error, 'error');
-        if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, retryInterval));
-        }
+        getLogger().log(`❌ Outlook邮箱API请求失败: ${error.message}`, 'error');
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
 
-    throw new Error(`经过 ${maxRetries} 次尝试后仍未获取到验证码。`);
+    getLogger().log(`⏰ Outlook邮箱验证码获取超时 (${maxWaitTime}秒)`, 'warning');
+    return null;
+  }
+
+  // 获取验证码（带重试机制）
+  async function getVerificationCode(maxRetries = 5, retryInterval = 3000) {
+    if (StateManager.app.mailMode === "outlook") {
+      getLogger().log("🏢 使用Outlook邮箱模式获取验证码", 'info');
+      return await getOutlookMailCode("验证码", Math.ceil(maxRetries * retryInterval / 1000));
+    } else {
+      getLogger().log("📧 使用临时邮箱模式获取验证码", 'info');
+      // 保持原有临时邮箱逻辑不变
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        getLogger().log(`尝试获取验证码 (第 ${attempt + 1}/${maxRetries} 次)...`);
+
+        try {
+          const code = await getLatestMailCode();
+          if (code) {
+            getLogger().log("成功获取验证码: " + code, 'success');
+            return code;
+          }
+
+          if (attempt < maxRetries - 1) {
+            getLogger().log(`未获取到验证码，${retryInterval / 1000}秒后重试...`,
+                'warning');
+            await new Promise(resolve => setTimeout(resolve, retryInterval));
+          }
+        } catch (error) {
+          getLogger().log("获取验证码出错: " + error, 'error');
+          if (attempt < maxRetries - 1) {
+            await new Promise(resolve => setTimeout(resolve, retryInterval));
+          }
+        }
+      }
+
+      throw new Error(`临时邮箱${maxRetries}次未获取到验证码`);
+    }
   }
 
   // 处理人机验证
